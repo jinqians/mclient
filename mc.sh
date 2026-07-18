@@ -33,13 +33,15 @@ main_menu() {
             "$(t main.routing)" \
             "$(t main.service)" \
             "$(t main.dashboard)" \
+            "$(t main.region)" \
             "$(t main.lang)"
         case "$MENU_CHOICE" in
             1) nodes_menu ;;
             2) routing_menu ;;
             3) service_menu ;;
             4) dashboard_menu ;;
-            5) i18n_pick ;;
+            5) service_set_region; press_enter ;;
+            6) i18n_pick ;;
             0) exit 0 ;;
             *) : ;;
         esac

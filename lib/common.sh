@@ -138,6 +138,17 @@ network_region_effective() {
     case "$region" in CN|GLOBAL|UNKNOWN) printf '%s' "$region" ;; *) printf 'UNKNOWN' ;; esac
 }
 
+# Default DIRECT latency-test URL. DIRECT is just the no-proxy case, so it
+# shares the standard endpoint with the nodes; only mainland CN needs a
+# domestic fallback since its direct path cannot reach the standard one.
+default_test_url_direct() {
+    if [[ "$(network_region_effective)" == "CN" ]]; then
+        printf '%s' "http://connect.rom.miui.com/generate_204"
+    else
+        printf '%s' "http://www.gstatic.com/generate_204"
+    fi
+}
+
 github_mirror_url() {
     local mirror="${2:-$MC_GITHUB_MIRROR}" url="$1"
     mirror="${mirror%/}"

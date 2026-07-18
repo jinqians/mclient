@@ -37,11 +37,15 @@ config_default_settings() {
         ipv6: false,
         tcp_concurrent: true,
         unified_delay: true,
-        # Separate latency-test targets: proxy nodes are measured against a
-        # foreign endpoint, DIRECT against a mainland one (a blocked/far URL
-        # says nothing about the direct path). Both editable from the menu.
+        # DIRECT is simply the no-proxy case, so it defaults to the same URL
+        # as the nodes — one target, proxied vs direct, directly comparable.
+        # Only mainland CN must fall back to a domestic endpoint, because the
+        # direct path cannot reach the standard one at all there. Both
+        # editable from the node menu.
         test_url_proxy: "http://www.gstatic.com/generate_204",
-        test_url_direct: "http://connect.rom.miui.com/generate_204",
+        test_url_direct: (if $region == "CN" then
+            "http://connect.rom.miui.com/generate_204"
+          else "http://www.gstatic.com/generate_204" end),
         quic_policy: "block",
         tun: { stack: "mixed", mtu: 1500, auto_redirect: true, strict_route: true },
         dns: {
@@ -101,16 +105,28 @@ config_migrate_settings() {
         | if .intercept_mode == "gateway" then
               .intercept_mode = "tun" | .lan_gateway = true
           else . end
+        # A stock DIRECT test URL follows the (possibly changed) region
+        # default; a custom URL is user-managed and left alone.
+        | if (.test_url_direct == "http://connect.rom.miui.com/generate_204"
+              or .test_url_direct == "http://www.gstatic.com/generate_204") then
+              .test_url_direct = $d.test_url_direct
+          else . end
         | (($old.dns // {}) as $dns
            | (($dns["respect-rules"] // null) == null
               and ($dns["proxy-server-nameserver"] // null) == null
               and (($dns.nameserver // []) == ["223.5.5.5", "119.29.29.29"]
                    or ($dns.nameserver // []) == ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"]))
           ) as $legacy_dns
-        | (($old.dns // {} | .nameserver // [])
-             == ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"]
-          ) as $stock_global_dns
-        | if $legacy_dns or $stock_global_dns then
+        # Any known stock nameserver list — untagged (leaky), #DIRECT
+        # (non-CN stock) or #PROXY (CN stock) — is re-derived from the
+        # current region defaults, so relocating a box and switching its
+        # region flips the whole DNS layout automatically.
+        | (($old.dns // {} | .nameserver // []) as $ns
+           | ($ns == ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"]
+              or $ns == ["https://1.1.1.1/dns-query#DIRECT", "https://8.8.8.8/dns-query#DIRECT"]
+              or $ns == ["https://1.1.1.1/dns-query#PROXY", "https://8.8.8.8/dns-query#PROXY"])
+          ) as $stock_dns
+        | if $legacy_dns or $stock_dns then
               .dns = ($d.dns * ($old.dns // {}))
               | .dns.nameserver = $d.dns.nameserver
               | .dns["direct-nameserver"] = $d.dns["direct-nameserver"]

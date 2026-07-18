@@ -75,8 +75,10 @@ mihomo core itself updates from 服务管理 → 更新 mihomo 内核.
   never regenerates). Fresh installs use MTU 1500 and block website QUIC/UDP
   443 by default so TCP-based proxies can fall back to the usually more stable
   HTTPS/TCP path; both editable from Service & Mode. The two latency-test URLs
-  (foreign one for nodes/AUTO, mainland one for DIRECT) have their own "Edit
-  test URLs" entry in the node menu, next to the latency test itself.
+  have their own "Edit test URLs" entry in the node menu, next to the latency
+  test itself: nodes/AUTO use a foreign endpoint, and DIRECT — being simply
+  the no-proxy case — shares it, except in mainland CN where the direct path
+  cannot reach it and a domestic endpoint is used instead.
 - **Region-aware DNS** — TUN hijacks system DNS into fake-IP mode. In mainland
   China, foreign DoH queries go through `PROXY`, while direct traffic and proxy
   server hostnames use Ali/Tencent DoH to avoid a DNS dependency loop. Outside
@@ -141,6 +143,13 @@ sudo MC_REGION=CN MC_GITHUB_MIRROR=https://cf.jinqians.com ./install.sh   # prim
 sudo MC_GITHUB_MIRRORS="https://m1.example.com https://m2.example.com" ./install.sh  # full list
 sudo MC_REGION=GLOBAL ./install.sh
 ```
+
+The region is detected once at install and cached. If the box later moves
+(e.g. overseas → mainland), switch it from the main menu ("Network region"):
+picking CN/GLOBAL — or re-detecting, best with the service stopped so the
+probe does not report the proxy exit's location — re-derives every stock
+region-dependent setting (DNS layout, DIRECT test endpoint, mirror
+preference) while custom values are left untouched.
 
 ## LAN gateway (旁路由) add-on
 

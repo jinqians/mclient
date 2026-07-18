@@ -1150,11 +1150,11 @@ _nodes_delay_one() {
 nodes_set_test_urls() {
     local url_proxy url_direct tmp
     url_proxy="$(jq -r '.test_url_proxy // "http://www.gstatic.com/generate_204"' "$SETTINGS_JSON" 2>/dev/null)"
-    url_direct="$(jq -r '.test_url_direct // "http://connect.rom.miui.com/generate_204"' "$SETTINGS_JSON" 2>/dev/null)"
+    url_direct="$(jq -r --arg d "$(default_test_url_direct)" '.test_url_direct // $d' "$SETTINGS_JSON" 2>/dev/null)"
     ask url_proxy "$(t service.ask_test_url_proxy)" "$url_proxy"
     [[ "$url_proxy" =~ ^https?:// ]] || { log_warn "$(t service.bad_test_url)"; url_proxy="http://www.gstatic.com/generate_204"; }
     ask url_direct "$(t service.ask_test_url_direct)" "$url_direct"
-    [[ "$url_direct" =~ ^https?:// ]] || { log_warn "$(t service.bad_test_url)"; url_direct="http://connect.rom.miui.com/generate_204"; }
+    [[ "$url_direct" =~ ^https?:// ]] || { log_warn "$(t service.bad_test_url)"; url_direct="$(default_test_url_direct)"; }
     tmp="$(mktemp)"
     if jq --arg tup "$url_proxy" --arg tud "$url_direct" '
         .test_url_proxy = $tup | .test_url_direct = $tud
@@ -1173,7 +1173,7 @@ nodes_test() {
     _NODES_CTRL="$(jq -r '.controller // "127.0.0.1:9090"' "$SETTINGS_JSON" 2>/dev/null)"
     secret="$(jq -r '.secret // ""' "$SETTINGS_JSON" 2>/dev/null)"
     url_proxy="$(jq -r '.test_url_proxy // "http://www.gstatic.com/generate_204"' "$SETTINGS_JSON" 2>/dev/null)"
-    url_direct="$(jq -r '.test_url_direct // "http://connect.rom.miui.com/generate_204"' "$SETTINGS_JSON" 2>/dev/null)"
+    url_direct="$(jq -r --arg d "$(default_test_url_direct)" '.test_url_direct // $d' "$SETTINGS_JSON" 2>/dev/null)"
     have curl || { log_error "$(t common.dep_missing "curl")"; return 1; }
     local auth=(); [[ -n "$secret" ]] && auth=(-H "Authorization: Bearer ${secret}")
     log_step "$(t nodes.test_running)"

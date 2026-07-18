@@ -42,6 +42,35 @@ _settings_set() {
     if jq --arg v "$val" ".${key} = \$v" "$SETTINGS_JSON" > "$tmp" 2>/dev/null; then mv -f "$tmp" "$SETTINGS_JSON"; else rm -f "$tmp"; fi
 }
 
+# ── Network region (CN / GLOBAL) ─────────────────────────────────────────────
+# Detected once at install and cached; a relocated box switches here. All
+# region-derived stock settings (DNS layout, DIRECT test URL, mirror
+# preference) follow automatically via config_migrate_settings.
+service_set_region() {
+    local cur; cur="$(network_region_effective)"
+    echo -e "  $(t service.region_current "$cur")"
+    echo -e "  1. CN — $(t service.region_cn)"
+    echo -e "  2. GLOBAL — $(t service.region_global)"
+    echo -e "  3. $(t service.region_auto)"
+    local c; read -rp "$(echo -e "${CYAN}$(t common.select): ${NC}")" c
+    local region=""
+    case "${c:-}" in
+        1) region="CN" ;;
+        2) region="GLOBAL" ;;
+        3)
+            svc_is_active && log_warn "$(t service.region_proxy_warn)"
+            log_info "$(t service.region_detecting)"
+            region="$(MC_REGION=AUTO network_region_detect)" ;;
+        *) return 0 ;;
+    esac
+    [[ -z "$region" ]] && return 0
+    MC_NETWORK_REGION="$region"; export MC_NETWORK_REGION
+    state_set network_region "$region"
+    log_ok "$(t service.region_set "$region")"
+    config_migrate_settings || true
+    mc_apply || true
+}
+
 # ── Gateway (旁路由) mode: TUN + IPv4 forwarding for the whole LAN ───────────
 GATEWAY_SYSCTL="/etc/sysctl.d/99-mclient-gateway.conf"
 
