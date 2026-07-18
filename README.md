@@ -67,12 +67,17 @@ mihomo core itself updates from 服务管理 → 更新 mihomo 内核.
     (mihomo's adaptive Surge-like group, with optional `policy-priority`
     weights, e.g. `HK:1.5`); rules can target groups by name.
 - **Service & mode** — systemd service; interception mode is a pluggable seam:
-  **TUN** (default, whole-host transparent) and **system-proxy** (mixed-port)
-  work today; **tproxy / LAN-gateway (旁路由)** is reserved — the generator
-  already emits its port, only the firewall wiring is left to add. Fresh installs
+  **TUN** (default, whole-host transparent), **system-proxy** (mixed-port) and
+  **LAN gateway / 旁路由** all work today; tproxy stays reserved. Gateway mode
+  reuses the TUN plumbing, forces `allow-lan`, serves DNS on `0.0.0.0:53` and
+  enables persistent IPv4 forwarding — point LAN devices' (or the main router's
+  DHCP) gateway *and* DNS at this host and the whole LAN follows the same
+  rules. A "Regenerate and apply config" menu entry rebuilds config.yaml with
+  validation + rollback (plain restart alone never regenerates). Fresh installs
   use MTU 1500 and block website QUIC/UDP 443 by default so TCP-based proxies can
-  fall back to the usually more stable HTTPS/TCP path; both settings are editable
-  from Service & Mode.
+  fall back to the usually more stable HTTPS/TCP path; these, plus the two
+  latency-test URLs (foreign one for nodes/AUTO, mainland one for DIRECT), are
+  editable from Service & Mode.
 - **Region-aware DNS** — TUN hijacks system DNS into fake-IP mode. In mainland
   China, foreign DoH queries go through `PROXY`, while direct traffic and proxy
   server hostnames use Ali/Tencent DoH to avoid a DNS dependency loop. Outside
@@ -138,8 +143,14 @@ sudo MC_GITHUB_MIRRORS="https://m1.example.com https://m2.example.com" ./install
 sudo MC_REGION=GLOBAL ./install.sh
 ```
 
-## Extending to a LAN gateway (旁路由) later
+## LAN gateway (旁路由) mode
 
-Set interception mode `tproxy` in `settings.json`; `config.sh` already emits a
-`tproxy-port`. The remaining work is the nftables/iptables redirect + firewall
-rules in `service.sh` (marked as the extension seam) plus `allow-lan: true`.
+Pick **gateway** under 服务与模式 → 切换拦截模式. mclient switches mihomo to
+TUN with `allow-lan`, listens for LAN DNS on `0.0.0.0:53`, and enables
+persistent IPv4 forwarding (`/etc/sysctl.d/99-mclient-gateway.conf`). Then
+point each LAN device — or the main router's DHCP options — at this host's IP
+for **both gateway and DNS**. Free local port 53 first if something like
+systemd-resolved holds it; a failed start validates and rolls back
+automatically. Switching back to TUN/system removes the forwarding drop-in.
+(tproxy remains a reserved seam: the generator already emits `tproxy-port`,
+only the firewall wiring is left.)

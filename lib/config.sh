@@ -34,6 +34,11 @@ config_default_settings() {
         ipv6: false,
         tcp_concurrent: true,
         unified_delay: true,
+        # Separate latency-test targets: proxy nodes are measured against a
+        # foreign endpoint, DIRECT against a mainland one (a blocked/far URL
+        # says nothing about the direct path). Both editable from the menu.
+        test_url_proxy: "http://www.gstatic.com/generate_204",
+        test_url_direct: "http://connect.rom.miui.com/generate_204",
         quic_policy: "block",
         tun: { stack: "mixed", mtu: 1500, auto_redirect: true, strict_route: true },
         dns: {
@@ -287,7 +292,9 @@ config_build() {
         | ($s.intercept_mode // "tun") as $mode
         | {
             "mixed-port":          ($s.mixed_port // 7890),
-            "allow-lan":           ($s.allow_lan // false),
+            # Gateway mode serves the whole LAN, so allow-lan is forced on.
+            "allow-lan":           (if $mode == "gateway" then true
+                                    else ($s.allow_lan // false) end),
             "ipv6":                ($s.ipv6 // false),
             "tcp-concurrent":      ($s.tcp_concurrent // true),
             "unified-delay":       ($s.unified_delay // true),
@@ -304,9 +311,10 @@ config_build() {
             }
           }
         + (if ($s.external_ui // "") != "" then { "external-ui": $s.external_ui } else {} end)
-        # ── interception mode (pluggable): tun today, system also supported,
-        #    tproxy/gateway reserved for a later extension ──
-        + (if $mode == "tun" then
+        # ── interception mode (pluggable): tun (single host), gateway (same
+        #    TUN plumbing + LAN forwarding, ip_forward wired in service.sh),
+        #    system proxy; tproxy reserved for a later extension ──
+        + (if $mode == "tun" or $mode == "gateway" then
               { tun: {
                     enable: true,
                     stack: ($s.tun.stack // "mixed"),
@@ -340,7 +348,9 @@ config_build() {
                     ."nameserver-policy" |= with_entries(
                         select(.key | valid_rule_set_ref($provider_names)))
                 else . end
-              | if ."nameserver-policy" == {} then del(."nameserver-policy") else . end) }
+              | if ."nameserver-policy" == {} then del(."nameserver-policy") else . end
+              # LAN clients point their DNS at this box in gateway mode.
+              | if $mode == "gateway" then . + { listen: "0.0.0.0:53" } else . end) }
         + { profile: { "store-selected": true, "store-fake-ip": true } }
         + { proxies: $proxies }
         + { "proxy-groups": (
@@ -354,7 +364,7 @@ config_build() {
                               then [$primary] + ($proxy_list | map(select(. != $primary)))
                               else $proxy_list end) },
                   { name: "AUTO", type: "url-test",
-                    url: "http://www.gstatic.com/generate_204",
+                    url: ($s.test_url_proxy // "http://www.gstatic.com/generate_204"),
                     interval: 300, tolerance: 50,
                     proxies: (if ($tags | length) > 0 then $tags else ["DIRECT"] end) }
               ]
@@ -363,7 +373,7 @@ config_build() {
                     | ($g.type // "select") as $gt
                     | { name: $g.name, type: $gt, proxies: ($g.proxies // ["DIRECT"]) }
                     + (if (["url-test","fallback","load-balance"] | index($gt)) != null then
-                          { url: ($g.url // "http://www.gstatic.com/generate_204"),
+                          { url: ($g.url // $s.test_url_proxy // "http://www.gstatic.com/generate_204"),
                             interval: ($g.interval // 300) }
                        else {} end)
                     # Pass through any extra tuning keys untouched

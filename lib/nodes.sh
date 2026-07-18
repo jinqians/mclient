@@ -1133,20 +1133,34 @@ nodes_set_primary() {
     fi
 }
 
-# Latency test through the running mihomo external-controller.
+# Latency test through the running mihomo external-controller. DIRECT is
+# tested as a no-proxy baseline against its own (mainland by default) URL;
+# nodes are measured against the proxy test URL.
+_nodes_delay_one() {
+    # _nodes_delay_one <tag> <encoded-url> <auth-args...>
+    local tag="$1" enc="$2"; shift 2
+    local ms; ms="$(curl -fsS --max-time 8 "$@" \
+        "http://${_NODES_CTRL}/proxies/$(printf '%s' "$tag" | jq -sRr @uri)/delay?timeout=5000&url=${enc}" 2>/dev/null \
+        | jq -r '.delay // "timeout"' 2>/dev/null)"
+    printf "  %-24s %s\n" "$tag" "${ms:-timeout}${ms:+ms}"
+}
+
 nodes_test() {
-    local ctrl secret; ctrl="$(jq -r '.controller // "127.0.0.1:9090"' "$SETTINGS_JSON" 2>/dev/null)"
+    local secret url_proxy url_direct
+    _NODES_CTRL="$(jq -r '.controller // "127.0.0.1:9090"' "$SETTINGS_JSON" 2>/dev/null)"
     secret="$(jq -r '.secret // ""' "$SETTINGS_JSON" 2>/dev/null)"
+    url_proxy="$(jq -r '.test_url_proxy // "http://www.gstatic.com/generate_204"' "$SETTINGS_JSON" 2>/dev/null)"
+    url_direct="$(jq -r '.test_url_direct // "http://connect.rom.miui.com/generate_204"' "$SETTINGS_JSON" 2>/dev/null)"
     have curl || { log_error "$(t common.dep_missing "curl")"; return 1; }
     local auth=(); [[ -n "$secret" ]] && auth=(-H "Authorization: Bearer ${secret}")
     log_step "$(t nodes.test_running)"
-    local tag
+    log_info "$(t nodes.test_url_direct "$url_direct")"
+    _nodes_delay_one "DIRECT" "$(printf '%s' "$url_direct" | jq -sRr @uri)" "${auth[@]}"
+    log_info "$(t nodes.test_url_proxy "$url_proxy")"
+    local enc tag; enc="$(printf '%s' "$url_proxy" | jq -sRr @uri)"
     while IFS= read -r tag; do
         [[ -z "$tag" ]] && continue
-        local ms; ms="$(curl -fsS --max-time 8 "${auth[@]}" \
-            "http://${ctrl}/proxies/$(printf '%s' "$tag" | jq -sRr @uri)/delay?timeout=5000&url=http://www.gstatic.com/generate_204" 2>/dev/null \
-            | jq -r '.delay // "timeout"' 2>/dev/null)"
-        printf "  %-24s %s\n" "$tag" "${ms:-timeout}${ms:+ms}"
+        _nodes_delay_one "$tag" "$enc" "${auth[@]}"
     done < <(_nodes_tags)
 }
 
