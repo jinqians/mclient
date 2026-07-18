@@ -46,34 +46,39 @@ config_default_settings() {
             "default-nameserver": (if $region == "CN" then
                 ["223.5.5.5", "119.29.29.29"]
               else ["1.1.1.1", "8.8.8.8"] end),
+            # Outside CN every resolver is pinned #DIRECT: with respect-rules
+            # an untagged DoH server falls through to the final policy (PROXY),
+            # so answers get geolocated to the proxy exit instead of locally.
             nameserver: (if $region == "CN" then
                 ["https://1.1.1.1/dns-query#PROXY", "https://8.8.8.8/dns-query#PROXY"]
-              else ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"] end),
+              else ["https://1.1.1.1/dns-query#DIRECT", "https://8.8.8.8/dns-query#DIRECT"] end),
             "direct-nameserver": (if $region == "CN" then
                 ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"]
-              else ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"] end),
+              else ["https://1.1.1.1/dns-query#DIRECT", "https://8.8.8.8/dns-query#DIRECT"] end),
             "proxy-server-nameserver": (if $region == "CN" then
                 ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"]
-              else ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"] end),
+              else ["https://1.1.1.1/dns-query#DIRECT", "https://8.8.8.8/dns-query#DIRECT"] end),
             "respect-rules": true,
             "nameserver-policy": {
                 "rule-set:tracking,advertising": "rcode://success",
                 "rule-set:private,direct,download,apple_cn,china":
                     (if $region == "CN" then
                         ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"]
-                     else ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"] end),
+                     else ["https://1.1.1.1/dns-query#DIRECT", "https://8.8.8.8/dns-query#DIRECT"] end),
                 "rule-set:ai,telegram,social,games,netflix,youtube,streaming,apple,google,microsoft,proxy":
                     (if $region == "CN" then
                         ["https://1.1.1.1/dns-query#PROXY", "https://8.8.8.8/dns-query#PROXY"]
-                     else ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"] end)
+                     else ["https://1.1.1.1/dns-query#DIRECT", "https://8.8.8.8/dns-query#DIRECT"] end)
             }
         }
     }'
 }
 
 # Add newly introduced performance settings without replacing deliberate user
-# customisation. The two DNS layouts shipped by older releases are recognised
-# and upgraded; any other nameserver list is treated as user-managed.
+# customisation. The stock DNS layouts shipped by older releases (two legacy
+# CN lists, plus the untagged non-CN DoH list that leaked queries through the
+# proxy) are recognised and upgraded; any other nameserver list is treated as
+# user-managed.
 config_migrate_settings() {
     [[ -f "$SETTINGS_JSON" ]] || return 0
     local defaults tmp
@@ -89,11 +94,15 @@ config_migrate_settings() {
               and (($dns.nameserver // []) == ["223.5.5.5", "119.29.29.29"]
                    or ($dns.nameserver // []) == ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"]))
           ) as $legacy_dns
-        | if $legacy_dns then
+        | (($old.dns // {} | .nameserver // [])
+             == ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"]
+          ) as $stock_global_dns
+        | if $legacy_dns or $stock_global_dns then
               .dns = ($d.dns * ($old.dns // {}))
               | .dns.nameserver = $d.dns.nameserver
               | .dns["direct-nameserver"] = $d.dns["direct-nameserver"]
               | .dns["proxy-server-nameserver"] = $d.dns["proxy-server-nameserver"]
+              | .dns["nameserver-policy"] = $d.dns["nameserver-policy"]
               | .dns["respect-rules"] = true
               | .dns |= del(.fallback)
           else
