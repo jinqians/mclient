@@ -66,7 +66,7 @@ routing_set_mode() {
 # "RULE-SET,url,NodeName". The policy may be a node tag, a group name, or
 # PROXY/DIRECT/REJECT; node tags are valid policies because .proxy.name == tag.
 routing_add_ruleset() {
-    local name url behavior fmt policy
+    local name url behavior fmt policy provider_proxy=""
     ask name "$(t routing.ask_rs_name)"
     [[ -z "$name" ]] && { log_error "$(t routing.payload_empty)"; return 1; }
     ask url "$(t routing.ask_rs_url)"
@@ -81,16 +81,18 @@ routing_add_ruleset() {
     esac
     case "$url" in
         https://github.com/*|https://raw.githubusercontent.com/*|https://objects.githubusercontent.com/*)
-            url="$(github_preferred_url "$url")" ;;
+            provider_proxy="PROXY" ;;
     esac
     log_info "$(t routing.policy_hint)"
     _nodes_tags 2>/dev/null | sed 's/^/    /'
     _rules_load | jq -r '(.groups // [])[].name' 2>/dev/null | sed 's/^/    /'
     local policy; ask policy "$(t routing.ask_rs_policy)" "PROXY"
     local r; r=$(_rules_load)
-    r=$(echo "$r" | jq --arg n "$name" --arg u "$url" --arg b "$behavior" --arg f "$fmt" --arg pol "$policy" '
+    r=$(echo "$r" | jq --arg n "$name" --arg u "$url" --arg b "$behavior" --arg f "$fmt" \
+        --arg pol "$policy" --arg pp "$provider_proxy" '
         .rule_providers[$n] = { type:"http", behavior:$b, format:$f, interval:86400,
                                 url:$u, path:("./ruleset/" + $n + "." + $f) }
+                                + (if $pp != "" then {proxy:$pp} else {} end)
         | .rules = ([{type:"RULE-SET", payload:$n, policy:$pol}]
                     + ((.rules // []) | map(select(.payload != $n or .type != "RULE-SET"))))')
     _rules_save "$r"

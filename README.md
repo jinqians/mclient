@@ -57,16 +57,24 @@ mihomo core itself updates from 服务管理 → 更新 mihomo 内核.
   - **Primary node** — pick which node the PROXY group exits through (menu:
     节点管理 → 设为主用节点); persists across restarts via
     `profile.store-selected`, live-switches the running core.
-  - **Rule-set → exit binding** — add any remote rule-set (.mrs/.yaml/.list,
-    GitHub URLs auto-mirrored) and bind it straight to a node, a group, or
-    PROXY/DIRECT/REJECT.
+  - **Rule-set → exit binding** — add any remote rule-set (.mrs/.yaml/.list).
+    GitHub providers keep their official URLs and update through `PROXY`; bind
+    each rule-set straight to a node, a group, or PROXY/DIRECT/REJECT.
   - **Groups** — select / url-test / fallback / load-balance / **smart**
     (mihomo's adaptive Surge-like group, with optional `policy-priority`
     weights, e.g. `HK:1.5`); rules can target groups by name.
 - **Service & mode** — systemd service; interception mode is a pluggable seam:
   **TUN** (default, whole-host transparent) and **system-proxy** (mixed-port)
   work today; **tproxy / LAN-gateway (旁路由)** is reserved — the generator
-  already emits its port, only the firewall wiring is left to add.
+  already emits its port, only the firewall wiring is left to add. Fresh installs
+  use MTU 1500 and block website QUIC/UDP 443 by default so TCP-based proxies can
+  fall back to the usually more stable HTTPS/TCP path; both settings are editable
+  from Service & Mode.
+- **Region-aware DNS** — TUN hijacks system DNS into fake-IP mode. In mainland
+  China, foreign DoH queries go through `PROXY`, while direct traffic and proxy
+  server hostnames use Ali/Tencent DoH to avoid a DNS dependency loop. Outside
+  mainland China, Cloudflare/Google DNS is used directly. Existing stock DNS
+  settings migrate automatically; custom nameservers are preserved.
 - **Dashboard** — external-controller API + optional local metacubexd Web UI:
   install/update, enable, disable, and uninstall from the menu. Binds
   127.0.0.1 only (never public); reach it remotely via an SSH tunnel
@@ -105,12 +113,14 @@ providers cannot freeze the installer indefinitely. Override it when needed:
 sudo MIHOMO_TEST_TIMEOUT=90 ./install.sh
 ```
 
-The installer detects whether the public IP is in mainland China. Mainland
-hosts try a list of GitHub mirrors in order (`https://cf.jinqians.com`,
-`https://ghfast.top`, `https://gh-proxy.com`, `https://ghproxy.net`) for mihomo
-releases, stock rule sets, and the dashboard; direct GitHub remains the final
-automatic fallback. Other regions try direct GitHub first, then the mirrors.
-Before a large download (mihomo binary, dashboard) every candidate source is
+The installer detects whether the public IP is in mainland China. Before the
+proxy service exists, mainland hosts try a list of GitHub mirrors in order
+(`https://cf.jinqians.com`, `https://ghfast.top`, `https://gh-proxy.com`,
+`https://ghproxy.net`), with direct GitHub as the final fallback. Once mclient
+is running, direct GitHub is tried first through TUN and mirrors become fallback
+sources only. Runtime rule providers always keep official GitHub URLs and fetch
+through `PROXY`. Other regions also try direct GitHub first. Before a large
+download (mihomo binary, dashboard) every candidate source is
 speed-probed in parallel (first 256 KB each, ≤8 s) and the fastest wins — a
 slow preferred mirror is automatically demoted, not just waited on. The
 transfer itself aborts only when it genuinely stalls (below 8 KB/s for 30 s)

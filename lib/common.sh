@@ -156,12 +156,20 @@ github_mirror_list() {
     done
 }
 
+# Once mclient is running, direct GitHub traffic is already captured by TUN and
+# sent through the selected node. Mirrors are bootstrap aids, not permanent
+# runtime routes.
+github_runtime_proxy_ready() {
+    have systemctl && systemctl is-active --quiet "${MIHOMO_SVC:-mclient}" 2>/dev/null
+}
+
 # Print direct and mirrored candidates in the preferred order, one per line.
-# CN: every mirror first (primary → fallbacks), then direct; elsewhere reversed.
+# Bootstrap in CN: mirrors first. Running service or global network: direct
+# first, with every mirror retained as a fallback.
 github_url_candidates() {
     local direct="$1" region m
     region="$(network_region_effective)"
-    if [[ "$region" == "CN" ]]; then
+    if [[ "$region" == "CN" ]] && ! github_runtime_proxy_ready; then
         while IFS= read -r m; do github_mirror_url "$direct" "$m"; echo; done < <(github_mirror_list)
         printf '%s\n' "$direct"
     else
@@ -170,11 +178,15 @@ github_url_candidates() {
     fi
 }
 
-# Runtime configs can contain only one provider URL. Mainland China uses the
-# mirror; other/unknown regions keep the official URL.
+# Runtime configs always keep the official URL. Their downloads should use the
+# mihomo PROXY policy; mirrors are reserved for pre-proxy bootstrap downloads.
 github_preferred_url() {
     local direct="$1"
-    if [[ "$(network_region_effective)" == "CN" ]]; then github_mirror_url "$direct"; else printf '%s' "$direct"; fi
+    if [[ "$direct" == *https://github.com/* ]]; then
+        printf 'https://github.com/%s' "${direct#*https://github.com/}"
+    else
+        printf '%s' "$direct"
+    fi
 }
 
 # ── Mirror speed probe ───────────────────────────────────────────────────────

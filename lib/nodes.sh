@@ -1085,6 +1085,27 @@ nodes_show() {
 }
 
 # ── Interactive: pick the primary node (PROXY group's active exit) ───────────
+_mihomo_select_proxy() {
+    local group="$1" target="$2" ctrl secret endpoint body attempt
+    ctrl="$(jq -r '.controller // "127.0.0.1:9090"' "$SETTINGS_JSON" 2>/dev/null)"
+    secret="$(jq -r '.secret // ""' "$SETTINGS_JSON" 2>/dev/null)"
+    endpoint="http://${ctrl}/proxies/$(printf '%s' "$group" | jq -sRr @uri)"
+    body="$(jq -nc --arg n "$target" '{name:$n}')"
+    local auth=(); [[ -n "$secret" ]] && auth=(-H "Authorization: Bearer ${secret}")
+
+    # Applying the config restarts mihomo. systemd may report the unit active
+    # slightly before the controller socket is ready, so retry briefly.
+    for attempt in 1 2 3 4 5; do
+        if curl -fsS -X PUT --connect-timeout 2 --max-time 4 \
+                -H "Content-Type: application/json" "${auth[@]}" \
+                --data-binary "$body" "$endpoint" >/dev/null 2>&1; then
+            return 0
+        fi
+        (( attempt < 5 )) && sleep 1
+    done
+    return 1
+}
+
 nodes_set_primary() {
     nodes_list
     local current; current="$(jq -r '.primary_node // "AUTO"' "$SETTINGS_JSON" 2>/dev/null)"
@@ -1102,13 +1123,7 @@ nodes_set_primary() {
     mc_apply || true
     # Live-switch the running core too; profile.store-selected persists it.
     if svc_is_active && have curl; then
-        local ctrl secret auth=()
-        ctrl="$(jq -r '.controller // "127.0.0.1:9090"' "$SETTINGS_JSON" 2>/dev/null)"
-        secret="$(jq -r '.secret // ""' "$SETTINGS_JSON" 2>/dev/null)"
-        [[ -n "$secret" ]] && auth=(-H "Authorization: Bearer ${secret}")
-        if curl -fsS -X PUT --max-time 5 "${auth[@]}" \
-                --data "$(jq -nc --arg n "$tag" '{name:$n}')" \
-                "http://${ctrl}/proxies/PROXY" >/dev/null 2>&1; then
+        if _mihomo_select_proxy "PROXY" "$tag"; then
             log_ok "$(t nodes.primary_set "$tag")"
         else
             log_warn "$(t nodes.primary_api_warn)"

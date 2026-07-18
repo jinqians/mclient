@@ -24,6 +24,10 @@ case "$region" in
     *) log_warn "$(t install.region_unknown)" ;;
 esac
 config_init_defaults
+log_info "$(t install.network_defaults \
+    "$(jq -r '.tun.stack // "mixed"' "$SETTINGS_JSON")" \
+    "$(jq -r '.tun.mtu // 1500' "$SETTINGS_JSON")" \
+    "$(jq -r '.quic_policy // "block"' "$SETTINGS_JSON")")"
 config_route_default_github_urls || log_warn "$(t config.github_route_fail)"
 
 if ! mihomo_installed; then

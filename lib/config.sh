@@ -17,10 +17,12 @@ config_init_defaults() {
     [[ -f "$NODES_JSON" ]]    || echo '[]' > "$NODES_JSON"
     [[ -f "$SETTINGS_JSON" ]] || config_default_settings > "$SETTINGS_JSON"
     [[ -f "$RULES_JSON" ]]    || config_default_rules    > "$RULES_JSON"
+    config_migrate_settings
 }
 
 config_default_settings() {
-    jq -n --arg secret "$(rand_hex 8)" '{
+    local region; region="$(network_region_effective)"
+    jq -n --arg secret "$(rand_hex 8)" --arg region "$region" '{
         intercept_mode: "tun",
         mixed_port: 7890,
         allow_lan: false,
@@ -30,28 +32,76 @@ config_default_settings() {
         log_level: "warning",
         ipv6: false,
         tcp_concurrent: true,
-        tun: { stack: "mixed", auto_redirect: true, strict_route: true },
+        quic_policy: "block",
+        tun: { stack: "mixed", mtu: 1500, auto_redirect: true, strict_route: true },
         dns: {
             enable: true,
+            ipv6: false,
             "enhanced-mode": "fake-ip",
             "fake-ip-range": "198.18.0.1/16",
             "fake-ip-filter": ["*.lan", "*.local", "+.pool.ntp.org"],
-            "default-nameserver": ["223.5.5.5", "119.29.29.29"],
-            nameserver: ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"],
-            fallback: ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"]
+            "default-nameserver": (if $region == "CN" then
+                ["223.5.5.5", "119.29.29.29"]
+              else ["1.1.1.1", "8.8.8.8"] end),
+            nameserver: (if $region == "CN" then
+                ["https://1.1.1.1/dns-query#PROXY", "https://8.8.8.8/dns-query#PROXY"]
+              else ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"] end),
+            "direct-nameserver": (if $region == "CN" then
+                ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"]
+              else ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"] end),
+            "proxy-server-nameserver": (if $region == "CN" then
+                ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"]
+              else ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"] end),
+            "respect-rules": true
         }
     }'
+}
+
+# Add newly introduced performance settings without replacing deliberate user
+# customisation. The two DNS layouts shipped by older releases are recognised
+# and upgraded; any other nameserver list is treated as user-managed.
+config_migrate_settings() {
+    [[ -f "$SETTINGS_JSON" ]] || return 0
+    local defaults tmp
+    defaults="$(config_default_settings)" || return 1
+    tmp="$(mktemp)"
+    if jq --argjson d "$defaults" '
+        . as $old
+        | ($d * .)
+        | .tun = ($d.tun * ($old.tun // {}))
+        | (($old.dns // {}) as $dns
+           | (($dns["respect-rules"] // null) == null
+              and ($dns["proxy-server-nameserver"] // null) == null
+              and (($dns.nameserver // []) == ["223.5.5.5", "119.29.29.29"]
+                   or ($dns.nameserver // []) == ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"]))
+          ) as $legacy_dns
+        | if $legacy_dns then
+              .dns = ($d.dns * ($old.dns // {}))
+              | .dns.nameserver = $d.dns.nameserver
+              | .dns["direct-nameserver"] = $d.dns["direct-nameserver"]
+              | .dns["proxy-server-nameserver"] = $d.dns["proxy-server-nameserver"]
+              | .dns["respect-rules"] = true
+              | .dns |= del(.fallback)
+          else
+              .dns = ($d.dns * ($old.dns // {}))
+          end
+    ' "$SETTINGS_JSON" > "$tmp" 2>/dev/null; then
+        mv -f "$tmp" "$SETTINGS_JSON"
+    else
+        rm -f "$tmp"
+        return 1
+    fi
 }
 
 # MetaCubeX meta-rules-dat .mrs sets: LAN/private + ads + China domains/IPs direct.
 config_default_rules() {
     local base="https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo" \
           private_url reject_url proxy_url cn_domain_url cn_ip_url
-    private_url="$(github_preferred_url "$base/geoip/private.mrs")"
-    reject_url="$(github_preferred_url "$base/geosite/category-ads-all.mrs")"
-    proxy_url="$(github_preferred_url "$base/geosite/geolocation-!cn.mrs")"
-    cn_domain_url="$(github_preferred_url "$base/geosite/cn.mrs")"
-    cn_ip_url="$(github_preferred_url "$base/geoip/cn.mrs")"
+    private_url="$base/geoip/private.mrs"
+    reject_url="$base/geosite/category-ads-all.mrs"
+    proxy_url="$base/geosite/geolocation-!cn.mrs"
+    cn_domain_url="$base/geosite/cn.mrs"
+    cn_ip_url="$base/geoip/cn.mrs"
     jq -n \
         --arg private_url "$private_url" --arg reject_url "$reject_url" \
         --arg proxy_url "$proxy_url" --arg cn_domain_url "$cn_domain_url" --arg cn_ip_url "$cn_ip_url" '{
@@ -59,19 +109,19 @@ config_default_rules() {
         final: "PROXY",
         groups: [],
         rule_providers: {
-            private:   { type:"http", behavior:"ipcidr", format:"mrs", interval:86400,
+            private:   { type:"http", behavior:"ipcidr", format:"mrs", interval:86400, proxy:"PROXY",
                          url:$private_url,
                          path:"./ruleset/private.mrs" },
-            reject:    { type:"http", behavior:"domain", format:"mrs", interval:86400,
+            reject:    { type:"http", behavior:"domain", format:"mrs", interval:86400, proxy:"PROXY",
                          url:$reject_url,
                          path:"./ruleset/reject.mrs" },
-            proxy:     { type:"http", behavior:"domain", format:"mrs", interval:86400,
+            proxy:     { type:"http", behavior:"domain", format:"mrs", interval:86400, proxy:"PROXY",
                          url:$proxy_url,
                          path:"./ruleset/proxy.mrs" },
-            cn_domain: { type:"http", behavior:"domain", format:"mrs", interval:86400,
+            cn_domain: { type:"http", behavior:"domain", format:"mrs", interval:86400, proxy:"PROXY",
                          url:$cn_domain_url,
                          path:"./ruleset/cn_domain.mrs" },
-            cn_ip:     { type:"http", behavior:"ipcidr", format:"mrs", interval:86400,
+            cn_ip:     { type:"http", behavior:"ipcidr", format:"mrs", interval:86400, proxy:"PROXY",
                          url:$cn_ip_url,
                          path:"./ruleset/cn_ip.mrs" }
         },
@@ -85,18 +135,16 @@ config_default_rules() {
     }'
 }
 
-# Rewrite only this project's stock MetaCubeX provider URLs. Custom providers
-# remain untouched. This also migrates existing installs when their region or
-# mirror preference changes.
+# Restore official URLs for this project's stock MetaCubeX providers and make
+# mihomo fetch them through PROXY. Custom providers remain untouched.
 config_route_default_github_urls() {
     [[ -f "$RULES_JSON" ]] || return 0
-    local region mirror proxy_url tmp
-    region="$(network_region_effective)"; mirror="${MC_GITHUB_MIRROR%/}"
-    proxy_url="$(github_preferred_url 'https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/geolocation-!cn.mrs')"
+    local proxy_url tmp
+    proxy_url='https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/geolocation-!cn.mrs'
     tmp="$(mktemp)"
-    if jq --arg region "$region" --arg mirror "$mirror" --arg proxy_url "$proxy_url" '
+    if jq --arg proxy_url "$proxy_url" '
         .rule_providers.proxy //= {
-            type:"http", behavior:"domain", format:"mrs", interval:86400,
+            type:"http", behavior:"domain", format:"mrs", interval:86400, proxy:"PROXY",
             url:$proxy_url, path:"./ruleset/proxy.mrs"
         }
         | if any(.rules[]?; .type == "RULE-SET" and .payload == "proxy")
@@ -107,10 +155,8 @@ config_route_default_github_urls() {
         .rule_providers |= with_entries(
             if (.value.url | type) == "string"
                and (.value.url | contains("https://github.com/MetaCubeX/meta-rules-dat/"))
-            then .value.url |= (
-                capture("(?<direct>https://github\\.com/MetaCubeX/meta-rules-dat/.*)").direct as $direct
-                | if $region == "CN" then $mirror + "/" + $direct else $direct end
-            )
+            then .value.url |= capture("(?<direct>https://github\\.com/MetaCubeX/meta-rules-dat/.*)").direct
+                 | .value.proxy = "PROXY"
             else . end
         )
     ' "$RULES_JSON" > "$tmp" 2>/dev/null; then
@@ -137,10 +183,10 @@ config_build() {
     # behind a blocked GitHub (dns.fallback's default fallback-filter needs it).
     local geo_base="https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest"
     local geox_mmdb geox_geoip geox_geosite geox_asn
-    geox_mmdb="$(github_preferred_url "$geo_base/country.mmdb")"
-    geox_geoip="$(github_preferred_url "$geo_base/geoip.dat")"
-    geox_geosite="$(github_preferred_url "$geo_base/geosite.dat")"
-    geox_asn="$(github_preferred_url "$geo_base/GeoLite2-ASN.mmdb")"
+    geox_mmdb="$geo_base/country.mmdb"
+    geox_geoip="$geo_base/geoip.dat"
+    geox_geosite="$geo_base/geosite.dat"
+    geox_asn="$geo_base/GeoLite2-ASN.mmdb"
 
     jq -n \
         --argjson s "$settings" \
@@ -175,6 +221,7 @@ config_build() {
               { tun: {
                     enable: true,
                     stack: ($s.tun.stack // "mixed"),
+                    mtu: ($s.tun.mtu // 1500),
                     "auto-route": true,
                     "auto-redirect": ($s.tun.auto_redirect // true),
                     "strict-route": ($s.tun.strict_route // true),
@@ -229,7 +276,10 @@ config_build() {
           ) }
         + { "rule-providers": ($r.rule_providers // {}) }
         + { rules: (
-              ( ($r.rules // []) | map(
+              (if ($s.quic_policy // "block") == "block" then
+                   ["AND,((NETWORK,UDP),(DST-PORT,443)),REJECT"]
+               else [] end)
+              + ( ($r.rules // []) | map(
                   [ .type, (.payload // empty), .policy,
                     (if .no_resolve then "no-resolve" else empty end) ]
                   | join(",")

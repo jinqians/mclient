@@ -59,13 +59,51 @@ service_set_mode() {
     [[ "$mode" == "system" ]] && log_info "$(t service.system_hint "$(jq -r '.mixed_port // 7890' "$SETTINGS_JSON")")"
 }
 
+service_set_network() {
+    local stack mtu current_quic quic tmp
+    stack="$(jq -r '.tun.stack // "mixed"' "$SETTINGS_JSON" 2>/dev/null)"
+    mtu="$(jq -r '.tun.mtu // 1500' "$SETTINGS_JSON" 2>/dev/null)"
+    current_quic="$(jq -r '.quic_policy // "block"' "$SETTINGS_JSON" 2>/dev/null)"
+
+    ask stack "$(t service.ask_tun_stack)" "$stack"
+    case "$stack" in system|gvisor|mixed) ;; *) stack=mixed ;; esac
+    ask mtu "$(t service.ask_tun_mtu)" "$mtu"
+    if [[ ! "$mtu" =~ ^[0-9]+$ ]] || (( mtu < 1280 || mtu > 9000 )); then
+        log_warn "$(t service.bad_tun_mtu)"; mtu=1500
+    fi
+    if [[ "$current_quic" == "block" ]]; then
+        ask_yn "$(t service.ask_block_quic)" Y && quic=block || quic=allow
+    else
+        ask_yn "$(t service.ask_block_quic)" N && quic=block || quic=allow
+    fi
+
+    tmp="$(mktemp)"
+    if jq --arg stack "$stack" --argjson mtu "$mtu" --arg quic "$quic" '
+        .tun = ((.tun // {}) + {stack:$stack, mtu:$mtu})
+        | .quic_policy = $quic
+    ' "$SETTINGS_JSON" > "$tmp" 2>/dev/null; then
+        mv -f "$tmp" "$SETTINGS_JSON"
+        log_ok "$(t service.network_set "$stack" "$mtu" "$quic")"
+        mc_apply || true
+    else
+        rm -f "$tmp"
+        log_error "$(t config.gen_fail)"
+        return 1
+    fi
+}
+
 service_logs() { journalctl -u "$MIHOMO_SVC" -n 60 --no-pager 2>/dev/null || log_warn "$(t service.no_logs)"; }
 
 service_menu() {
     while true; do
         local st; svc_is_active && st="${GREEN}$(t service.active)${NC}" || st="${YELLOW}$(t service.inactive)${NC}"
-        local mode; mode="$(jq -r '.intercept_mode // "tun"' "$SETTINGS_JSON" 2>/dev/null)"
+        local mode stack mtu quic
+        mode="$(jq -r '.intercept_mode // "tun"' "$SETTINGS_JSON" 2>/dev/null)"
+        stack="$(jq -r '.tun.stack // "mixed"' "$SETTINGS_JSON" 2>/dev/null)"
+        mtu="$(jq -r '.tun.mtu // 1500' "$SETTINGS_JSON" 2>/dev/null)"
+        quic="$(jq -r '.quic_policy // "block"' "$SETTINGS_JSON" 2>/dev/null)"
         echo -e "\n  $(t service.status): ${st}   $(t service.mode): ${GREEN}${mode}${NC}"
+        echo -e "  $(t service.network_status "$stack" "$mtu" "$quic")"
         show_menu "$(t service.menu_title)" \
             "$(t service.start)" \
             "$(t service.stop)" \
@@ -73,6 +111,7 @@ service_menu() {
             "$(t service.status_cmd)" \
             "$(t service.logs)" \
             "$(t service.set_mode)" \
+            "$(t service.set_network)" \
             "$(t service.install_unit)" \
             "$(t service.update_core)"
         case "$MENU_CHOICE" in
@@ -82,8 +121,9 @@ service_menu() {
             4) svc_status ;;
             5) service_logs ;;
             6) service_set_mode ;;
-            7) service_install_unit ;;
-            8) mihomo_install && { svc_is_active && { svc_restart && log_ok "$(t service.restarted)" || log_error "$(t service.op_fail)"; } || true; } ;;
+            7) service_set_network ;;
+            8) service_install_unit ;;
+            9) mihomo_install && { svc_is_active && { svc_restart && log_ok "$(t service.restarted)" || log_error "$(t service.op_fail)"; } || true; } ;;
             0) return ;;
         esac
         press_enter
