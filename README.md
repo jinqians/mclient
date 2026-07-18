@@ -51,9 +51,12 @@ mihomo core itself updates from 服务管理 → 更新 mihomo 内核.
     obfs / v2ray-plugin / shadow-tls plugins; legacy base64 form; `ssr://`
   - `snell://` (v1–v5, shadow-tls obfs), `socks://` / `socks5://`,
     `http(s)://user:pass@host` proxy links, `wireguard://` / `wg://`
-- **Routing / 分流** — default policy is *China direct + ads rejected + rest via
-  proxy* using MetaCubeX geosite/geoip rule-sets; add custom rules, switch
-  rule/global/direct. Surge-style controls:
+- **Routing / 分流** — compact enhanced categories inspired by
+  [MIHOMO_YAMLS](https://github.com/HenryChiao/MIHOMO_YAMLS), backed by the
+  maintained `666OS/rules` MRS data: ads/tracking, private/direct/download,
+  AI, Telegram/social, games, Netflix/YouTube/streaming, Apple/Google/Microsoft,
+  generic proxy and China domain/IP rules. Custom rules can override any
+  category; rule/global/direct modes remain available. Surge-style controls:
   - **Primary node** — pick which node the PROXY group exits through (menu:
     节点管理 → 设为主用节点); persists across restarts via
     `profile.store-selected`, live-switches the running core.
@@ -73,8 +76,10 @@ mihomo core itself updates from 服务管理 → 更新 mihomo 内核.
 - **Region-aware DNS** — TUN hijacks system DNS into fake-IP mode. In mainland
   China, foreign DoH queries go through `PROXY`, while direct traffic and proxy
   server hostnames use Ali/Tencent DoH to avoid a DNS dependency loop. Outside
-  mainland China, Cloudflare/Google DNS is used directly. Existing stock DNS
-  settings migrate automatically; custom nameservers are preserved.
+  mainland China, Cloudflare/Google DNS is used directly. DNS policy and fake-IP
+  filtering follow the same direct/proxy/ad rule sets. Existing stock DNS and
+  the previous five-rule layout migrate automatically; custom nameservers,
+  custom rules and custom groups are preserved.
 - **Dashboard** — external-controller API + optional local metacubexd Web UI:
   install/update, enable, disable, and uninstall from the menu. Binds
   127.0.0.1 only (never public); reach it remotely via an SSH tunnel
