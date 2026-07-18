@@ -71,6 +71,36 @@ service_set_region() {
     mc_apply || true
 }
 
+# ── IPv6 leak guard ──────────────────────────────────────────────────────────
+# mihomo runs with ipv6:false, so it only captures IPv4; native IPv6 would
+# bypass the TUN and expose the real address (the classic WebRTC leak, and it
+# affects all v6 traffic, not just WebRTC). While proxying is v4-only the
+# guard disables system IPv6; it re-enables when ipv6 proxying is turned on
+# or the guard is switched off. Kept idempotent: mc_apply calls it on every
+# apply so any settings path stays in sync.
+IPV6_GUARD_SYSCTL="/etc/sysctl.d/98-mclient-ipv6.conf"
+
+service_ipv6_guard_sync() {
+    [[ -d /etc/sysctl.d ]] || return 0   # not a Linux target (e.g. dev box)
+    local want
+    want="$(jq -r 'if (.ipv6 // false) == false and (.block_ipv6_leak // true) == true
+                   then "1" else "0" end' "$SETTINGS_JSON" 2>/dev/null)"
+    if [[ "$want" == "1" ]]; then
+        [[ -f "$IPV6_GUARD_SYSCTL" ]] && return 0
+        printf 'net.ipv6.conf.all.disable_ipv6 = 1\nnet.ipv6.conf.default.disable_ipv6 = 1\n' \
+            > "$IPV6_GUARD_SYSCTL" 2>/dev/null || return 0
+        sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1 || true
+        sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
+        log_info "$(t service.ipv6_guard_on)"
+    else
+        [[ -f "$IPV6_GUARD_SYSCTL" ]] || return 0
+        rm -f "$IPV6_GUARD_SYSCTL"
+        sysctl -w net.ipv6.conf.all.disable_ipv6=0 >/dev/null 2>&1 || true
+        sysctl -w net.ipv6.conf.default.disable_ipv6=0 >/dev/null 2>&1 || true
+        log_info "$(t service.ipv6_guard_off)"
+    fi
+}
+
 # ── Gateway (旁路由) mode: TUN + IPv4 forwarding for the whole LAN ───────────
 GATEWAY_SYSCTL="/etc/sysctl.d/99-mclient-gateway.conf"
 
@@ -143,6 +173,9 @@ service_toggle_gateway() {
         mc_apply || true
         local lan_ip; lan_ip="$(_lan_ip || true)"
         log_info "$(t service.gateway_hint "${lan_ip:-<LAN-IP>}")"
+        # LAN clients' native IPv6 bypasses a side-gateway entirely; only the
+        # main router can cut it off.
+        log_info "$(t service.gateway_ipv6_note)"
     fi
 }
 
@@ -163,10 +196,18 @@ service_set_network() {
     else
         ask_yn "$(t service.ask_block_quic)" N && quic=block || quic=allow
     fi
+    local cur_guard guard
+    cur_guard="$(jq -r '.block_ipv6_leak // true' "$SETTINGS_JSON" 2>/dev/null)"
+    if [[ "$cur_guard" == "true" ]]; then
+        ask_yn "$(t service.ask_ipv6_guard)" Y && guard=true || guard=false
+    else
+        ask_yn "$(t service.ask_ipv6_guard)" N && guard=true || guard=false
+    fi
     tmp="$(mktemp)"
-    if jq --arg stack "$stack" --argjson mtu "$mtu" --arg quic "$quic" '
+    if jq --arg stack "$stack" --argjson mtu "$mtu" --arg quic "$quic" --argjson guard "$guard" '
         .tun = ((.tun // {}) + {stack:$stack, mtu:$mtu})
         | .quic_policy = $quic
+        | .block_ipv6_leak = $guard
     ' "$SETTINGS_JSON" > "$tmp" 2>/dev/null; then
         mv -f "$tmp" "$SETTINGS_JSON"
         log_ok "$(t service.network_set "$stack" "$mtu" "$quic")"

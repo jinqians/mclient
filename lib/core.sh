@@ -205,5 +205,8 @@ mc_apply() {
             return 1
         fi
     fi
+    # Host-level companions to the config (defined in service.sh; absent in
+    # config-only contexts such as the test suite).
+    declare -f service_ipv6_guard_sync >/dev/null 2>&1 && { service_ipv6_guard_sync || true; }
     return 0
 }
