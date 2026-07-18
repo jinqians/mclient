@@ -1133,6 +1133,42 @@ nodes_set_primary() {
     fi
 }
 
+# ── Chained proxy (链式代理, dialer-proxy) ───────────────────────────────────
+# Standalone feature, deliberately not part of node adding: attach/detach a
+# front node to a landing node via mihomo's dialer-proxy field. Traffic then
+# flows local → front → landing → target. Rendering needs no special support:
+# proxies are emitted verbatim, so the field just carries through.
+nodes_chain() {
+    local n; n="$(_nodes_count 2>/dev/null || echo 0)"
+    (( n < 2 )) && { log_warn "$(t nodes.chain_need_two)"; return 0; }
+    log_info "$(t nodes.chain_current)"
+    _nodes_load | jq -r '.[] | "  " + .tag
+        + (if .proxy["dialer-proxy"] then "  ⇐ " + .proxy["dialer-proxy"] else "" end)'
+    local land; ask land "$(t nodes.chain_ask_landing)"
+    local node; node=$(_nodes_get "$land")
+    [[ -z "$node" ]] && { log_error "$(t nodes.not_found "$land")"; return 1; }
+    local front; ask front "$(t nodes.chain_ask_front)"
+    if [[ -z "$front" || "$front" == "-" ]]; then
+        node=$(echo "$node" | jq '.proxy |= del(.["dialer-proxy"])')
+        _nodes_upsert "$node"
+        log_ok "$(t nodes.chain_cleared "$land")"
+        mc_apply || true
+        return 0
+    fi
+    [[ -z "$(_nodes_get "$front")" ]] && { log_error "$(t nodes.not_found "$front")"; return 1; }
+    # Reject cycles (front == landing, or any dialer-proxy path leading back).
+    local cur="$front" hops=0
+    while [[ -n "$cur" ]] && (( hops < 16 )); do
+        [[ "$cur" == "$land" ]] && { log_error "$(t nodes.chain_loop)"; return 1; }
+        cur="$(_nodes_get "$cur" | jq -r '.proxy["dialer-proxy"] // empty' 2>/dev/null)"
+        hops=$((hops + 1))
+    done
+    node=$(echo "$node" | jq --arg f "$front" '.proxy["dialer-proxy"] = $f')
+    _nodes_upsert "$node"
+    log_ok "$(t nodes.chain_set "$land" "$front")"
+    mc_apply || true
+}
+
 # Latency test through the running mihomo external-controller. DIRECT is
 # tested as a no-proxy baseline against its own (mainland by default) URL;
 # nodes are measured against the proxy test URL.
@@ -1200,7 +1236,8 @@ nodes_menu() {
             "$(t nodes.show)" \
             "$(t nodes.test)" \
             "$(t nodes.set_test_urls)" \
-            "$(t nodes.set_primary)"
+            "$(t nodes.set_primary)" \
+            "$(t nodes.chain)"
         case "$MENU_CHOICE" in
             1) nodes_import_uri ;;
             2) nodes_import_sub ;;
@@ -1212,6 +1249,7 @@ nodes_menu() {
             8) nodes_test ;;
             9) nodes_set_test_urls ;;
             10) nodes_set_primary ;;
+            11) nodes_chain ;;
             0) return ;;
         esac
         press_enter

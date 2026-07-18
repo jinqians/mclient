@@ -66,6 +66,10 @@ mihomo core itself updates from 服务管理 → 更新 mihomo 内核.
   - **Groups** — select / url-test / fallback / load-balance / **smart**
     (mihomo's adaptive Surge-like group, with optional `policy-priority`
     weights, e.g. `HK:1.5`); rules can target groups by name.
+  - **Chained proxy (链式代理)** — a standalone node-menu entry (not tied to
+    node adding) attaches a front node to a landing node via mihomo's
+    `dialer-proxy`: traffic flows local → front → landing → target. Loops are
+    rejected up front; clearing the chain is the same entry with `-`.
 - **Service & mode** — systemd service; interception mode is a pluggable seam:
   **TUN** (default, whole-host transparent) and **system-proxy** (mixed-port)
   work today; tproxy stays reserved. The **LAN gateway / 旁路由** is an
