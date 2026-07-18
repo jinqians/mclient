@@ -90,16 +90,25 @@ mihomo core itself updates from 服务管理 → 更新 mihomo 内核.
   filtering follow the same direct/proxy/ad rule sets. Existing stock DNS and
   the previous five-rule layout migrate automatically; custom nameservers,
   custom rules and custom groups are preserved.
-- **IPv6 / WebRTC leak guard** — traffic that goes through mihomo can only
-  ever show the proxy exit's IP, so a WebRTC "real IP" leak means traffic
-  bypassed the TUN — in practice native IPv6, which `ipv6: false` mihomo does
-  not capture. While proxying is v4-only, mclient disables host IPv6
-  (persisted via `/etc/sysctl.d/98-mclient-ipv6.conf`, synced on every apply);
-  the guard stands down automatically if IPv6 proxying is enabled, and can be
-  toggled in the network settings. In side-router mode LAN clients' own IPv6
-  still bypasses this host — disable IPv6/DHCPv6 on the main router. (A
-  browser listing a `192.168.x.x` host candidate is local-only mDNS info, not
-  a proxy leak.)
+- **WebRTC / leak paths** — traffic that actually goes through mihomo can
+  only ever show the proxy exit's IP. A WebRTC "real IP" result therefore
+  always means the traffic bypassed mihomo, and the fix depends on the path:
+  - *Client uses the box as an HTTP/SOCKS proxy (mixed-port / system proxy)*:
+    WebRTC's STUN probes are plain UDP that **by design ignores browser/system
+    proxies** — the real IPv4 leaks from the client itself and no server-side
+    setting can intercept it. Fix: route the whole client through the box
+    (side-router mode), or set a browser policy
+    (`WebRtcIPHandling=disable_non_proxied_udp` / a WebRTC-leak-prevent
+    extension).
+  - *Native IPv6 on this host*: `ipv6: false` mihomo captures only IPv4, so
+    host v6 traffic can slip past the TUN. An **optional, off-by-default**
+    strict guard in the network settings disables host IPv6 (persisted via
+    `/etc/sysctl.d/98-mclient-ipv6.conf`, synced on every apply; stands down
+    when IPv6 proxying is enabled).
+  - *Side-router LAN clients' own IPv6*: bypasses this host entirely —
+    disable IPv6/DHCPv6 on the main router.
+  - A browser listing a `192.168.x.x` host candidate is local-only mDNS info,
+    not a proxy leak.
 - **Dashboard** — external-controller API + optional local metacubexd Web UI:
   install/update, enable, disable, and uninstall from the menu. Binds
   127.0.0.1 only (never public); reach it remotely via an SSH tunnel

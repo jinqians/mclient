@@ -83,7 +83,7 @@ IPV6_GUARD_SYSCTL="/etc/sysctl.d/98-mclient-ipv6.conf"
 service_ipv6_guard_sync() {
     [[ -d /etc/sysctl.d ]] || return 0   # not a Linux target (e.g. dev box)
     local want
-    want="$(jq -r 'if (.ipv6 // false) == false and (.block_ipv6_leak // true) == true
+    want="$(jq -r 'if (.ipv6 // false) == false and (.block_ipv6_leak // false) == true
                    then "1" else "0" end' "$SETTINGS_JSON" 2>/dev/null)"
     if [[ "$want" == "1" ]]; then
         [[ -f "$IPV6_GUARD_SYSCTL" ]] && return 0
@@ -197,7 +197,7 @@ service_set_network() {
         ask_yn "$(t service.ask_block_quic)" N && quic=block || quic=allow
     fi
     local cur_guard guard
-    cur_guard="$(jq -r '.block_ipv6_leak // true' "$SETTINGS_JSON" 2>/dev/null)"
+    cur_guard="$(jq -r '.block_ipv6_leak // false' "$SETTINGS_JSON" 2>/dev/null)"
     if [[ "$cur_guard" == "true" ]]; then
         ask_yn "$(t service.ask_ipv6_guard)" Y && guard=true || guard=false
     else

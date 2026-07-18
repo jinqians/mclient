@@ -47,11 +47,13 @@ config_default_settings() {
             "http://connect.rom.miui.com/generate_204"
           else "http://www.gstatic.com/generate_204" end),
         quic_policy: "block",
-        # With ipv6:false mihomo only captures IPv4; native IPv6 would bypass
-        # the TUN entirely (the classic WebRTC "real IP" leak). The guard
-        # disables system IPv6 while proxying is v4-only (service.sh wires
-        # the sysctl); it stands down automatically if ipv6 is enabled.
-        block_ipv6_leak: true,
+        # Optional strict mode, off by default: with ipv6:false mihomo only
+        # captures IPv4, so native IPv6 can bypass the TUN on this host. The
+        # guard disables system IPv6 while proxying is v4-only (service.sh
+        # wires the sysctl). Note it cannot help proxy-port clients — WebRTC
+        # bypasses HTTP/SOCKS proxies on the client itself by design; use the
+        # gateway add-on or a browser WebRTC policy for those.
+        block_ipv6_leak: false,
         tun: { stack: "mixed", mtu: 1500, auto_redirect: true, strict_route: true },
         dns: {
             enable: true,
