@@ -25,6 +25,9 @@ config_default_settings() {
     local region; region="$(network_region_effective)"
     jq -n --arg secret "$(rand_hex 8)" --arg region "$region" '{
         intercept_mode: "tun",
+        # Optional add-on over TUN: serve the LAN as a gateway (旁路由).
+        # Off by default; toggled from the service menu, never at install.
+        lan_gateway: false,
         mixed_port: 7890,
         allow_lan: false,
         controller: "127.0.0.1:9090",
@@ -93,6 +96,11 @@ config_migrate_settings() {
         . as $old
         | ($d * .)
         | .tun = ($d.tun * ($old.tun // {}))
+        # One release shipped the gateway as an intercept mode; it is a
+        # TUN add-on toggle now.
+        | if .intercept_mode == "gateway" then
+              .intercept_mode = "tun" | .lan_gateway = true
+          else . end
         | (($old.dns // {}) as $dns
            | (($dns["respect-rules"] // null) == null
               and ($dns["proxy-server-nameserver"] // null) == null
@@ -290,10 +298,11 @@ config_build() {
         | ($nodes | map(.tag))  as $tags
         | ($r.rule_providers // {} | keys) as $provider_names
         | ($s.intercept_mode // "tun") as $mode
+        | (($s.lan_gateway // false) == true) as $gw
         | {
             "mixed-port":          ($s.mixed_port // 7890),
-            # Gateway mode serves the whole LAN, so allow-lan is forced on.
-            "allow-lan":           (if $mode == "gateway" then true
+            # The gateway add-on serves the whole LAN, so allow-lan is forced.
+            "allow-lan":           (if $gw then true
                                     else ($s.allow_lan // false) end),
             "ipv6":                ($s.ipv6 // false),
             "tcp-concurrent":      ($s.tcp_concurrent // true),
@@ -311,10 +320,10 @@ config_build() {
             }
           }
         + (if ($s.external_ui // "") != "" then { "external-ui": $s.external_ui } else {} end)
-        # ── interception mode (pluggable): tun (single host), gateway (same
-        #    TUN plumbing + LAN forwarding, ip_forward wired in service.sh),
-        #    system proxy; tproxy reserved for a later extension ──
-        + (if $mode == "tun" or $mode == "gateway" then
+        # ── interception mode (pluggable): tun (default; the lan_gateway
+        #    add-on rides on it, ip_forward wired in service.sh), system
+        #    proxy; tproxy reserved for a later extension ──
+        + (if $mode == "tun" then
               { tun: {
                     enable: true,
                     stack: ($s.tun.stack // "mixed"),
@@ -349,8 +358,9 @@ config_build() {
                         select(.key | valid_rule_set_ref($provider_names)))
                 else . end
               | if ."nameserver-policy" == {} then del(."nameserver-policy") else . end
-              # LAN clients point their DNS at this box in gateway mode.
-              | if $mode == "gateway" then . + { listen: "0.0.0.0:53" } else . end) }
+              # LAN clients point their DNS at this box when the gateway
+              # add-on is enabled.
+              | if $gw then . + { listen: "0.0.0.0:53" } else . end) }
         + { profile: { "store-selected": true, "store-fake-ip": true } }
         + { proxies: $proxies }
         + { "proxy-groups": (

@@ -64,28 +64,54 @@ _gateway_forwarding_off() {
     log_info "$(t service.gateway_forward_off)"
 }
 
+_settings_set_bool() {
+    local key="$1" val="$2" tmp; tmp=$(mktemp)
+    if jq --argjson v "$val" ".${key} = \$v" "$SETTINGS_JSON" > "$tmp" 2>/dev/null; then mv -f "$tmp" "$SETTINGS_JSON"; else rm -f "$tmp"; fi
+}
+
+_gateway_enabled() {
+    [[ "$(jq -r '.lan_gateway // false' "$SETTINGS_JSON" 2>/dev/null)" == "true" ]]
+}
+
 service_set_mode() {
     echo -e "  1. TUN — $(t service.mode_tun)"
     echo -e "  2. system-proxy — $(t service.mode_system)"
-    echo -e "  3. gateway — $(t service.mode_gateway)"
     local c; read -rp "$(echo -e "${CYAN}$(t service.ask_mode) [1]: ${NC}")" c
     local mode
     case "${c:-1}" in
         2) mode=system ;;
-        3) mode=gateway ;;
         *) mode=tun ;;
     esac
     _settings_set intercept_mode "$mode"
-    log_ok "$(t service.mode_set "$mode")"
-    if [[ "$mode" == "gateway" ]]; then
-        _gateway_forwarding_on
-        log_info "$(t service.gateway_port53)"
-    else
+    # The gateway add-on rides on TUN; leaving TUN switches it off too.
+    if [[ "$mode" != "tun" ]] && _gateway_enabled; then
+        _settings_set_bool lan_gateway false
         _gateway_forwarding_off
+        log_warn "$(t service.gateway_off_by_mode)"
     fi
+    log_ok "$(t service.mode_set "$mode")"
     mc_apply || true
     [[ "$mode" == "system" ]] && log_info "$(t service.system_hint "$(jq -r '.mixed_port // 7890' "$SETTINGS_JSON")")"
-    if [[ "$mode" == "gateway" ]]; then
+}
+
+# Standalone on/off toggle for the LAN gateway (旁路由) add-on. Optional:
+# nothing in install or normal single-host use ever requires it.
+service_toggle_gateway() {
+    if _gateway_enabled; then
+        _settings_set_bool lan_gateway false
+        _gateway_forwarding_off
+        log_ok "$(t service.gateway_disabled)"
+        mc_apply || true
+    else
+        local mode; mode="$(jq -r '.intercept_mode // "tun"' "$SETTINGS_JSON" 2>/dev/null)"
+        if [[ "$mode" != "tun" ]]; then
+            _settings_set intercept_mode tun
+            log_info "$(t service.gateway_needs_tun)"
+        fi
+        _settings_set_bool lan_gateway true
+        _gateway_forwarding_on
+        log_info "$(t service.gateway_port53)"
+        mc_apply || true
         local lan_ip; lan_ip="$(_lan_ip || true)"
         log_info "$(t service.gateway_hint "${lan_ip:-<LAN-IP>}")"
     fi
@@ -138,12 +164,13 @@ service_logs() { journalctl -u "$MIHOMO_SVC" -n 60 --no-pager 2>/dev/null || log
 service_menu() {
     while true; do
         local st; svc_is_active && st="${GREEN}$(t service.active)${NC}" || st="${YELLOW}$(t service.inactive)${NC}"
-        local mode stack mtu quic
+        local mode stack mtu quic gw_st
         mode="$(jq -r '.intercept_mode // "tun"' "$SETTINGS_JSON" 2>/dev/null)"
         stack="$(jq -r '.tun.stack // "mixed"' "$SETTINGS_JSON" 2>/dev/null)"
         mtu="$(jq -r '.tun.mtu // 1500' "$SETTINGS_JSON" 2>/dev/null)"
         quic="$(jq -r '.quic_policy // "block"' "$SETTINGS_JSON" 2>/dev/null)"
-        echo -e "\n  $(t service.status): ${st}   $(t service.mode): ${GREEN}${mode}${NC}"
+        _gateway_enabled && gw_st="$(t service.gw_on)" || gw_st="$(t service.gw_off)"
+        echo -e "\n  $(t service.status): ${st}   $(t service.mode): ${GREEN}${mode}${NC}   $(t service.gateway_state "$gw_st")"
         echo -e "  $(t service.network_status "$stack" "$mtu" "$quic")"
         show_menu "$(t service.menu_title)" \
             "$(t service.start)" \
@@ -154,6 +181,7 @@ service_menu() {
             "$(t service.logs)" \
             "$(t service.set_mode)" \
             "$(t service.set_network)" \
+            "$(t service.gateway_toggle "$gw_st")" \
             "$(t service.install_unit)" \
             "$(t service.update_core)"
         case "$MENU_CHOICE" in
@@ -165,8 +193,9 @@ service_menu() {
             6) service_logs ;;
             7) service_set_mode ;;
             8) service_set_network ;;
-            9) service_install_unit ;;
-            10) mihomo_install && { svc_is_active && { svc_restart && log_ok "$(t service.restarted)" || log_error "$(t service.op_fail)"; } || true; } ;;
+            9) service_toggle_gateway ;;
+            10) service_install_unit ;;
+            11) mihomo_install && { svc_is_active && { svc_restart && log_ok "$(t service.restarted)" || log_error "$(t service.op_fail)"; } || true; } ;;
             0) return ;;
         esac
         press_enter
