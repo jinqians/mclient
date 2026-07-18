@@ -1145,6 +1145,29 @@ _nodes_delay_one() {
     printf "  %-24s %s\n" "$tag" "${ms:-timeout}${ms:+ms}"
 }
 
+# Edit the two latency-test URLs in place (proxy nodes vs DIRECT baseline).
+# Standalone entry so changing a URL never drags users through TUN/QUIC prompts.
+nodes_set_test_urls() {
+    local url_proxy url_direct tmp
+    url_proxy="$(jq -r '.test_url_proxy // "http://www.gstatic.com/generate_204"' "$SETTINGS_JSON" 2>/dev/null)"
+    url_direct="$(jq -r '.test_url_direct // "http://connect.rom.miui.com/generate_204"' "$SETTINGS_JSON" 2>/dev/null)"
+    ask url_proxy "$(t service.ask_test_url_proxy)" "$url_proxy"
+    [[ "$url_proxy" =~ ^https?:// ]] || { log_warn "$(t service.bad_test_url)"; url_proxy="http://www.gstatic.com/generate_204"; }
+    ask url_direct "$(t service.ask_test_url_direct)" "$url_direct"
+    [[ "$url_direct" =~ ^https?:// ]] || { log_warn "$(t service.bad_test_url)"; url_direct="http://connect.rom.miui.com/generate_204"; }
+    tmp="$(mktemp)"
+    if jq --arg tup "$url_proxy" --arg tud "$url_direct" '
+        .test_url_proxy = $tup | .test_url_direct = $tud
+    ' "$SETTINGS_JSON" > "$tmp" 2>/dev/null; then
+        mv -f "$tmp" "$SETTINGS_JSON"
+        log_ok "$(t nodes.test_urls_saved)"
+        # AUTO group embeds the proxy URL, so the config must be rebuilt.
+        mc_apply || true
+    else
+        rm -f "$tmp"; log_error "$(t config.gen_fail)"
+    fi
+}
+
 nodes_test() {
     local secret url_proxy url_direct
     _NODES_CTRL="$(jq -r '.controller // "127.0.0.1:9090"' "$SETTINGS_JSON" 2>/dev/null)"
@@ -1176,6 +1199,7 @@ nodes_menu() {
             "$(t nodes.delete)" \
             "$(t nodes.show)" \
             "$(t nodes.test)" \
+            "$(t nodes.set_test_urls)" \
             "$(t nodes.set_primary)"
         case "$MENU_CHOICE" in
             1) nodes_import_uri ;;
@@ -1186,7 +1210,8 @@ nodes_menu() {
             6) nodes_delete ;;
             7) nodes_show ;;
             8) nodes_test ;;
-            9) nodes_set_primary ;;
+            9) nodes_set_test_urls ;;
+            10) nodes_set_primary ;;
             0) return ;;
         esac
         press_enter

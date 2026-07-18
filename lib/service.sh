@@ -118,12 +118,10 @@ service_toggle_gateway() {
 }
 
 service_set_network() {
-    local stack mtu current_quic quic url_proxy url_direct tmp
+    local stack mtu current_quic quic tmp
     stack="$(jq -r '.tun.stack // "mixed"' "$SETTINGS_JSON" 2>/dev/null)"
     mtu="$(jq -r '.tun.mtu // 1500' "$SETTINGS_JSON" 2>/dev/null)"
     current_quic="$(jq -r '.quic_policy // "block"' "$SETTINGS_JSON" 2>/dev/null)"
-    url_proxy="$(jq -r '.test_url_proxy // "http://www.gstatic.com/generate_204"' "$SETTINGS_JSON" 2>/dev/null)"
-    url_direct="$(jq -r '.test_url_direct // "http://connect.rom.miui.com/generate_204"' "$SETTINGS_JSON" 2>/dev/null)"
 
     ask stack "$(t service.ask_tun_stack)" "$stack"
     case "$stack" in system|gvisor|mixed) ;; *) stack=mixed ;; esac
@@ -136,18 +134,10 @@ service_set_network() {
     else
         ask_yn "$(t service.ask_block_quic)" N && quic=block || quic=allow
     fi
-    ask url_proxy "$(t service.ask_test_url_proxy)" "$url_proxy"
-    [[ "$url_proxy" =~ ^https?:// ]] || { log_warn "$(t service.bad_test_url)"; url_proxy="http://www.gstatic.com/generate_204"; }
-    ask url_direct "$(t service.ask_test_url_direct)" "$url_direct"
-    [[ "$url_direct" =~ ^https?:// ]] || { log_warn "$(t service.bad_test_url)"; url_direct="http://connect.rom.miui.com/generate_204"; }
-
     tmp="$(mktemp)"
-    if jq --arg stack "$stack" --argjson mtu "$mtu" --arg quic "$quic" \
-          --arg tup "$url_proxy" --arg tud "$url_direct" '
+    if jq --arg stack "$stack" --argjson mtu "$mtu" --arg quic "$quic" '
         .tun = ((.tun // {}) + {stack:$stack, mtu:$mtu})
         | .quic_policy = $quic
-        | .test_url_proxy = $tup
-        | .test_url_direct = $tud
     ' "$SETTINGS_JSON" > "$tmp" 2>/dev/null; then
         mv -f "$tmp" "$SETTINGS_JSON"
         log_ok "$(t service.network_set "$stack" "$mtu" "$quic")"

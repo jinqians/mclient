@@ -74,8 +74,9 @@ mihomo core itself updates from 服务管理 → 更新 mihomo 内核.
   entry rebuilds config.yaml with validation + rollback (plain restart alone
   never regenerates). Fresh installs use MTU 1500 and block website QUIC/UDP
   443 by default so TCP-based proxies can fall back to the usually more stable
-  HTTPS/TCP path; these, plus the two latency-test URLs (foreign one for
-  nodes/AUTO, mainland one for DIRECT), are editable from Service & Mode.
+  HTTPS/TCP path; both editable from Service & Mode. The two latency-test URLs
+  (foreign one for nodes/AUTO, mainland one for DIRECT) have their own "Edit
+  test URLs" entry in the node menu, next to the latency test itself.
 - **Region-aware DNS** — TUN hijacks system DNS into fake-IP mode. In mainland
   China, foreign DoH queries go through `PROXY`, while direct traffic and proxy
   server hostnames use Ali/Tencent DoH to avoid a DNS dependency loop. Outside
